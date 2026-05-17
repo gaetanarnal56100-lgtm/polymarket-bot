@@ -69,8 +69,9 @@ class BinanceFeed:
         score = momentum_10s * 0.6 + momentum_30s * 0.4
 
         # Sigmoid : prob = 1 / (1 + exp(-k * score))
+        # k=150 calibré pour move 0.3% en 10s → prob 0.61 (trade déclenchable)
         import math
-        k = 15  # sensibilité
+        k = 150  # sensibilité (k=15 était trop faible, 0.5% move → 0.519 seulement)
         raw_prob = 1.0 / (1.0 + math.exp(-k * (score / 100)))
 
         if direction.upper() == "YES":
