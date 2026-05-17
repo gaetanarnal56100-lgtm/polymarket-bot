@@ -147,9 +147,10 @@ class ArbitrageBot:
                 else:  # "below"
                     implied_prob = 1.0 / (1.0 + math.exp(dist * 15))
 
-                # Si probabilité réelle très haute (>95%) ou basse (<5%)
-                # → marché quasi-décidé, edge artificiel → skip
-                if implied_prob > 0.95 or implied_prob < 0.05:
+                # Si marché déjà quasi-résolu côté YES (prix poly extrême)
+                # → pas besoin du filtre implied_prob, le filtre yes_price 0.04/0.96 suffit
+                # On garde seulement le filtre haute probabilité pour éviter d'acheter YES quasi-certain
+                if implied_prob > 0.95 and market.yes_price > 0.90:
                     continue
             else:
                 # Marché momentum : utiliser le signal Binance (10s/30s)
