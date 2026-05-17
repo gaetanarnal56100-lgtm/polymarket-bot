@@ -154,9 +154,15 @@ class ArbitrageBot:
                     continue
             else:
                 # Marché momentum : utiliser le signal Binance (10s/30s)
-                direction = "YES"
-                if any(kw in market.question.lower() for kw in ["lower", "below", "down", "bearish"]):
+                # Marchés "Up or Down" = momentum pur → direction YES (Up = token[0])
+                # Exclure le mot "down" si la question contient "up or down"
+                q_lower = market.question.lower()
+                if "up or down" in q_lower:
+                    direction = "YES"
+                elif any(kw in q_lower for kw in ["lower", "below", "down", "bearish"]):
                     direction = "NO"
+                else:
+                    direction = "YES"
                 implied_prob = self.feed.get_implied_probability(sym, direction)
 
             # Construire signal
