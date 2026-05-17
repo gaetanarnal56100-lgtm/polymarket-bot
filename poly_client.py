@@ -120,6 +120,35 @@ async def _fetch_updown_markets(session: aiohttp.ClientSession, keyword: str) ->
         return []
 
 
+async def _fetch_daily_series_markets(session: aiohttp.ClientSession) -> list[dict]:
+    """Fetch les marchés daily Up or Down BTC/ETH via les séries Polymarket."""
+    series_slugs = [
+        "btc-up-or-down-daily",
+        "eth-up-or-down-daily",
+    ]
+    results = []
+    for slug in series_slugs:
+        try:
+            params = {"active": "true", "closed": "false", "limit": "5", "order": "endDate", "ascending": "false"}
+            async with session.get(
+                f"{GAMMA_API}/events",
+                params={**params, "seriesSlug": slug},
+                timeout=aiohttp.ClientTimeout(total=8)
+            ) as r:
+                if not r.ok:
+                    continue
+                events = await r.json()
+                if not isinstance(events, list):
+                    continue
+                for event in events:
+                    for m in event.get("markets", []):
+                        if m.get("active") and not m.get("closed"):
+                            results.append(m)
+        except Exception as e:
+            print(f"[PolyClient] fetch daily series error ({slug}): {e}")
+    return results
+
+
 async def fetch_active_markets(session: aiohttp.ClientSession) -> list[PolyMarket]:
     """
     Récupère les marchés crypto actifs avec liquidité suffisante.
@@ -129,6 +158,7 @@ async def fetch_active_markets(session: aiohttp.ClientSession) -> list[PolyMarke
         _fetch_markets_raw(session, "volume", "false"),
         _fetch_markets_raw(session, "liquidity", "false"),
         _fetch_updown_markets(session, "up or down"),
+        _fetch_daily_series_markets(session),
     )
     # Dédupliquer par id
     seen: set[str] = set()
