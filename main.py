@@ -164,6 +164,9 @@ class ArbitrageBot:
                 else:
                     direction = "YES"
                 implied_prob = self.feed.get_implied_probability(sym, direction)
+                # Signal momentum trop faible → pas de trade (évite faux edges)
+                if abs(implied_prob - 0.5) < 0.15:
+                    continue
 
             # Construire signal
             signal = build_signal(
