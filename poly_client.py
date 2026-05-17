@@ -149,6 +149,61 @@ async def _fetch_daily_series_markets(session: aiohttp.ClientSession) -> list[di
     return results
 
 
+async def _fetch_5m_markets(session: aiohttp.ClientSession) -> list[dict]:
+    """
+    Fetch les marchés rolling 5-min (BTC/ETH/SOL/XRP Up or Down).
+    Ces marchés sont `restricted: true` → invisibles dans les listings normaux.
+    Mais fetchables par slug direct : {sym}-updown-5m-{unix_end_timestamp}.
+    On génère les timestamps des 3 prochaines fenêtres de 5 min.
+    """
+    import time as _time
+    now = int(_time.time())
+    # Slot courant (arrondi au 5 min inférieur) + 3 prochains
+    base_slot = (now // 300) * 300
+    symbols = ["btc", "eth", "sol", "xrp"]
+
+    # Fetch en parallèle
+    slugs_to_fetch = []
+    for offset in range(4):   # fenêtre actuelle + 3 suivantes
+        slot = base_slot + offset * 300
+        for sym in symbols:
+            slugs_to_fetch.append(f"{sym}-updown-5m-{slot}")
+
+    async def _fetch_one(slug: str) -> list[dict]:
+        try:
+            async with session.get(
+                f"{GAMMA_API}/events",
+                params={"slug": slug},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                if not r.ok:
+                    return []
+                events = await r.json()
+                if not isinstance(events, list):
+                    return []
+                out = []
+                for event in events:
+                    for m in event.get("markets", []):
+                        if m.get("active") and not m.get("closed"):
+                            out.append(m)
+                return out
+        except Exception:
+            return []
+
+    batches = await asyncio.gather(*[_fetch_one(s) for s in slugs_to_fetch])
+    results = []
+    seen: set[str] = set()
+    for batch in batches:
+        for m in batch:
+            mid = m.get("id", "")
+            if mid and mid not in seen:
+                seen.add(mid)
+                results.append(m)
+    if results:
+        print(f"[PolyClient] 5m markets trouvés : {len(results)}")
+    return results
+
+
 async def fetch_active_markets(session: aiohttp.ClientSession) -> list[PolyMarket]:
     """
     Récupère les marchés crypto actifs avec liquidité suffisante.
@@ -159,6 +214,7 @@ async def fetch_active_markets(session: aiohttp.ClientSession) -> list[PolyMarke
         _fetch_markets_raw(session, "liquidity", "false"),
         _fetch_updown_markets(session, "up or down"),
         _fetch_daily_series_markets(session),
+        _fetch_5m_markets(session),
     )
     # Dédupliquer par id
     seen: set[str] = set()
