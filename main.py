@@ -135,7 +135,18 @@ class ArbitrageBot:
             # Stratégie 2 : marché momentum ("higher/lower in 5 min")
             #   → utiliser le momentum Binance (sigmoid)
 
-            price_target = market.parse_price_target()
+            # Ignorer stratégie prix-cible pour marchés long terme (>30j)
+            # Le sigmoid est calibré court terme — sur 7 mois il sur-estime/sous-estime
+            days_to_expiry = 0
+            if market.end_date:
+                try:
+                    from datetime import datetime, timezone
+                    end = datetime.fromisoformat(market.end_date.replace("Z", "+00:00"))
+                    days_to_expiry = (end - datetime.now(timezone.utc)).days
+                except Exception:
+                    days_to_expiry = 999
+
+            price_target = market.parse_price_target() if days_to_expiry <= 30 else None
 
             if price_target is not None:
                 target_price, target_dir = price_target
