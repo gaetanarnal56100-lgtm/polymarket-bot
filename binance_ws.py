@@ -1,4 +1,4 @@
-"""binance_ws.py — REST polling Bybit (Binance bloqué sur GCP US — HTTP 451)"""
+"""binance_ws.py — CoinGecko REST polling (aucune restriction géographique)"""
 from __future__ import annotations
 import asyncio
 import math
@@ -8,9 +8,22 @@ from typing import Callable
 import aiohttp
 from config import BINANCE_SYMBOLS, PRICE_WINDOW_SEC
 
-# Bybit public API — pas de restriction géographique
-BYBIT_REST_URL = "https://api.bybit.com/v5/market/tickers?category=spot"
-POLL_INTERVAL  = 2.0   # secondes entre chaque fetch REST
+# CoinGecko public API — fonctionne depuis toutes les régions GCP
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
+POLL_INTERVAL = 4.0   # 4s = 15 req/min (limite free = 30/min)
+
+# Mapping symbol Binance → CoinGecko ID
+SYMBOL_TO_CG = {
+    "btcusdt":  "bitcoin",
+    "ethusdt":  "ethereum",
+    "solusdt":  "solana",
+    "xrpusdt":  "ripple",
+    "bnbusdt":  "binancecoin",
+    "dogeusdt": "dogecoin",
+    "suiusdt":  "sui",
+}
+CG_TO_SYMBOL = {v: k for k, v in SYMBOL_TO_CG.items()}
+CG_IDS = ",".join(SYMBOL_TO_CG[s] for s in BINANCE_SYMBOLS if s in SYMBOL_TO_CG)
 
 
 class BinanceFeed:
@@ -62,24 +75,24 @@ class BinanceFeed:
             return 1.0 - raw_prob
 
     async def run(self):
-        """REST polling Bybit — remplace Binance WebSocket."""
+        """CoinGecko polling — fonctionne depuis toutes régions GCP."""
         self._running = True
-        target_syms = {s.upper() for s in BINANCE_SYMBOLS}
-        print(f"[Price Feed] Démarrage Bybit polling {len(BINANCE_SYMBOLS)} symboles toutes les {POLL_INTERVAL}s")
+        params = {"ids": CG_IDS, "vs_currencies": "usd"}
+        print(f"[Price Feed] CoinGecko polling {len(SYMBOL_TO_CG)} symboles toutes les {POLL_INTERVAL}s")
 
         async with aiohttp.ClientSession() as session:
             while self._running:
                 try:
-                    async with session.get(BYBIT_REST_URL, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    async with session.get(COINGECKO_URL, params=params,
+                                           timeout=aiohttp.ClientTimeout(total=8)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            tickers = data.get("result", {}).get("list", [])
                             now = time.time()
-                            for item in tickers:
-                                sym = item.get("symbol", "").lower()
-                                if sym.upper() not in target_syms:
+                            for cg_id, values in data.items():
+                                sym = CG_TO_SYMBOL.get(cg_id)
+                                if not sym:
                                     continue
-                                price = float(item.get("lastPrice", 0))
+                                price = float(values.get("usd", 0))
                                 if not price:
                                     continue
                                 self.prices[sym] = price
@@ -93,11 +106,18 @@ class BinanceFeed:
                                         fn(sym, price)
                                     except Exception:
                                         pass
+                            if self.prices:
+                                btc = self.prices.get("btcusdt", 0)
+                                eth = self.prices.get("ethusdt", 0)
+                                print(f"[Price Feed] ✅ BTC={btc:.0f} ETH={eth:.0f}")
+                        elif resp.status == 429:
+                            print("[Price Feed] ⚠️  Rate limit, attente 30s…")
+                            await asyncio.sleep(30)
                         else:
                             print(f"[Price Feed] ⚠️  HTTP {resp.status}")
                 except Exception as e:
-                    print(f"[Price Feed] ⚠️  Erreur ({e}), retry dans 5s…")
-                    await asyncio.sleep(5)
+                    print(f"[Price Feed] ⚠️  Erreur ({e}), retry dans 10s…")
+                    await asyncio.sleep(10)
                     continue
                 await asyncio.sleep(POLL_INTERVAL)
 
