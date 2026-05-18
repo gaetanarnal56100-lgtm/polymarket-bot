@@ -10,7 +10,7 @@ from config import BINANCE_SYMBOLS, PRICE_WINDOW_SEC
 
 # CoinGecko public API — fonctionne depuis toutes les régions GCP
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
-POLL_INTERVAL = 4.0   # 4s = 15 req/min (limite free = 30/min)
+POLL_INTERVAL = 10.0  # 10s = 6 req/min (safe sous limite free 30/min)
 
 # Mapping symbol Binance → CoinGecko ID
 SYMBOL_TO_CG = {
