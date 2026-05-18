@@ -21,6 +21,7 @@ SYMBOL_TO_CC = {
     "bnbusdt":  "BNB",
     "dogeusdt": "DOGE",
     "suiusdt":  "SUI",
+    "hypeusdt": "HYPE",
 }
 CC_TO_SYMBOL = {v: k for k, v in SYMBOL_TO_CC.items()}
 CC_FSYMS = ",".join(SYMBOL_TO_CC[s] for s in BINANCE_SYMBOLS if s in SYMBOL_TO_CC)

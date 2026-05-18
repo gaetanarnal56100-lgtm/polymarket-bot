@@ -29,7 +29,7 @@ GAMMA_API              = "https://gamma-api.polymarket.com"
 
 # ── Binance WebSocket ──────────────────────────────────────────────────────
 BINANCE_WS_URL     = "wss://stream.binance.com:9443/stream"
-BINANCE_SYMBOLS    = ["btcusdt", "ethusdt", "solusdt", "xrpusdt", "bnbusdt", "dogeusdt", "suiusdt"]   # paires suivies
+BINANCE_SYMBOLS    = ["btcusdt", "ethusdt", "solusdt", "xrpusdt", "bnbusdt", "dogeusdt", "suiusdt", "hypeusdt"]   # paires suivies
 PRICE_WINDOW_SEC   = 30    # fenêtre glissante pour calculer le mouvement
 
 # ── Timeouts / intervals ───────────────────────────────────────────────────

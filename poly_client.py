@@ -45,6 +45,8 @@ class PolyMarket:
             return "dogeusdt"
         if " SUI" in q:
             return "suiusdt"
+        if "HYPE" in q:
+            return "hypeusdt"
         return ""
 
     def parse_price_target(self) -> tuple[float, str] | None:
@@ -160,7 +162,7 @@ async def _fetch_5m_markets(session: aiohttp.ClientSession) -> list[dict]:
     now = int(_time.time())
     # Slot courant (arrondi au 5 min inférieur) + 3 prochains
     base_slot = (now // 300) * 300
-    symbols = ["btc", "eth", "sol", "xrp"]
+    symbols = ["btc", "eth", "sol", "xrp", "doge", "bnb", "hype"]
 
     # Fetch en parallèle
     slugs_to_fetch = []
