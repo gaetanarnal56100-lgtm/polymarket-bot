@@ -1,49 +1,44 @@
-"""binance_ws.py — WebSocket Binance <50ms pour BTC/ETH prix en temps réel"""
+"""binance_ws.py — REST polling Binance (fallback when WS blocked by GCP US IPs)"""
 from __future__ import annotations
 import asyncio
-import json
+import math
 import time
 from collections import deque
 from typing import Callable
-import websockets
-from config import BINANCE_WS_URL, BINANCE_SYMBOLS, PRICE_WINDOW_SEC
+import aiohttp
+from config import BINANCE_SYMBOLS, PRICE_WINDOW_SEC
+
+BINANCE_REST_URL = "https://api.binance.com/api/v3/ticker/price"
+POLL_INTERVAL    = 2.0   # secondes entre chaque fetch REST
 
 
 class BinanceFeed:
     """
-    WebSocket Binance — latence <50ms.
-    Fournit :
-      - prix actuel par symbole
-      - historique des prix (fenêtre glissante PRICE_WINDOW_SEC)
-      - vitesse de mouvement (pct change / seconde)
+    REST polling Binance — latence ~2s (acceptable pour marchés 5min+).
+    Interface identique à la version WebSocket.
     """
 
     def __init__(self):
-        self.prices: dict[str, float]           = {}
-        self.history: dict[str, deque]          = {s: deque() for s in BINANCE_SYMBOLS}
-        self._callbacks: list[Callable]         = []
+        self.prices: dict[str, float]  = {}
+        self.history: dict[str, deque] = {s: deque() for s in BINANCE_SYMBOLS}
+        self._callbacks: list[Callable] = []
         self._running = False
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def on_price(self, fn: Callable):
-        """Enregistrer un callback appelé à chaque mise à jour de prix."""
         self._callbacks.append(fn)
 
     def get_price(self, symbol: str) -> float | None:
         return self.prices.get(symbol.lower())
 
     def get_momentum(self, symbol: str, window_sec: int = 10) -> float:
-        """
-        Retourne le % de changement de prix sur les N dernières secondes.
-        Positif = hausse, négatif = baisse.
-        """
+        """% changement prix sur N dernières secondes. Positif = hausse."""
         sym = symbol.lower()
         now = time.time()
         hist = self.history.get(sym)
         if not hist or len(hist) < 2:
             return 0.0
-        # Prix le plus ancien dans la fenêtre
         cutoff = now - window_sec
         old_entry = next(((ts, p) for ts, p in hist if ts >= cutoff), None)
         if old_entry is None:
@@ -54,78 +49,54 @@ class BinanceFeed:
         return (current - old_entry[1]) / old_entry[1] * 100
 
     def get_implied_probability(self, symbol: str, direction: str) -> float:
-        """
-        Probabilité implicite que le prix soit PLUS HAUT (ou PLUS BAS)
-        dans les 5-15 prochaines minutes, basée sur le momentum actuel.
-
-        Modèle simplifié :
-          - Momentum fort positif → prob hausse élevée
-          - Utilise une sigmoid sur le momentum pour normaliser en [0,1]
-        """
+        """Probabilité implicite basée sur momentum (sigmoid k=150)."""
         momentum_10s = self.get_momentum(symbol, 10)
         momentum_30s = self.get_momentum(symbol, 30)
-
-        # Score composite pondéré
         score = momentum_10s * 0.6 + momentum_30s * 0.4
-
-        # Sigmoid : prob = 1 / (1 + exp(-k * score))
-        # k=150 calibré pour move 0.3% en 10s → prob 0.61 (trade déclenchable)
-        import math
-        k = 150  # sensibilité (k=15 était trop faible, 0.5% move → 0.519 seulement)
+        k = 150
         raw_prob = 1.0 / (1.0 + math.exp(-k * (score / 100)))
-
         if direction.upper() == "YES":
-            return raw_prob    # prob que ça monte
+            return raw_prob
         else:
-            return 1.0 - raw_prob  # prob que ça baisse
+            return 1.0 - raw_prob
 
     async def run(self):
-        """Lancer le WebSocket — tourne en permanence."""
+        """REST polling loop — remplace WebSocket."""
         self._running = True
-        streams = "/".join(f"{s}@miniTicker" for s in BINANCE_SYMBOLS)
-        url = f"{BINANCE_WS_URL}?streams={streams}"
-        print(f"[Binance WS] Connexion à {url}")
+        symbols_param = str([s.upper() for s in BINANCE_SYMBOLS]).replace("'", '"').replace(" ", "")
+        url = f"{BINANCE_REST_URL}?symbols={symbols_param}"
+        print(f"[Binance REST] Démarrage polling {len(BINANCE_SYMBOLS)} symboles toutes les {POLL_INTERVAL}s")
 
-        while self._running:
-            try:
-                async with websockets.connect(url, ping_interval=20) as ws:
-                    print("[Binance WS] ✅ Connecté")
-                    async for raw in ws:
-                        self._handle(raw)
-            except Exception as e:
-                print(f"[Binance WS] ⚠️  Déconnecté ({e}), reconnexion dans 2s…")
-                await asyncio.sleep(2)
+        async with aiohttp.ClientSession() as session:
+            while self._running:
+                try:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            now = time.time()
+                            for item in data:
+                                sym = item["symbol"].lower()
+                                price = float(item["price"])
+                                if not price:
+                                    continue
+                                self.prices[sym] = price
+                                hist = self.history.setdefault(sym, deque())
+                                hist.append((now, price))
+                                cutoff = now - PRICE_WINDOW_SEC
+                                while hist and hist[0][0] < cutoff:
+                                    hist.popleft()
+                                for fn in self._callbacks:
+                                    try:
+                                        fn(sym, price)
+                                    except Exception:
+                                        pass
+                        else:
+                            print(f"[Binance REST] ⚠️  HTTP {resp.status}")
+                except Exception as e:
+                    print(f"[Binance REST] ⚠️  Erreur ({e}), retry dans 5s…")
+                    await asyncio.sleep(5)
+                    continue
+                await asyncio.sleep(POLL_INTERVAL)
 
     def stop(self):
         self._running = False
-
-    # ── Interne ───────────────────────────────────────────────────────────
-
-    def _handle(self, raw: str):
-        try:
-            msg = json.loads(raw)
-            data = msg.get("data", msg)
-            sym = data.get("s", "").lower()
-            price = float(data.get("c", 0))  # "c" = close/current price
-            if not sym or not price:
-                return
-
-            now = time.time()
-            self.prices[sym] = price
-
-            # Historique glissant
-            hist = self.history.setdefault(sym, deque())
-            hist.append((now, price))
-            cutoff = now - PRICE_WINDOW_SEC
-            while hist and hist[0][0] < cutoff:
-                hist.popleft()
-
-            # Callbacks
-            for fn in self._callbacks:
-                try:
-                    fn(sym, price)
-                except Exception:
-                    pass
-
-        except Exception:
-            pass
