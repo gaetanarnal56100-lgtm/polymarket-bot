@@ -1,4 +1,4 @@
-"""binance_ws.py — REST polling Binance (fallback when WS blocked by GCP US IPs)"""
+"""binance_ws.py — REST polling Bybit (Binance bloqué sur GCP US — HTTP 451)"""
 from __future__ import annotations
 import asyncio
 import math
@@ -8,8 +8,9 @@ from typing import Callable
 import aiohttp
 from config import BINANCE_SYMBOLS, PRICE_WINDOW_SEC
 
-BINANCE_REST_URL = "https://api.binance.com/api/v3/ticker/price"
-POLL_INTERVAL    = 2.0   # secondes entre chaque fetch REST
+# Bybit public API — pas de restriction géographique
+BYBIT_REST_URL = "https://api.bybit.com/v5/market/tickers?category=spot"
+POLL_INTERVAL  = 2.0   # secondes entre chaque fetch REST
 
 
 class BinanceFeed:
@@ -61,22 +62,24 @@ class BinanceFeed:
             return 1.0 - raw_prob
 
     async def run(self):
-        """REST polling loop — remplace WebSocket."""
+        """REST polling Bybit — remplace Binance WebSocket."""
         self._running = True
-        symbols_param = str([s.upper() for s in BINANCE_SYMBOLS]).replace("'", '"').replace(" ", "")
-        url = f"{BINANCE_REST_URL}?symbols={symbols_param}"
-        print(f"[Binance REST] Démarrage polling {len(BINANCE_SYMBOLS)} symboles toutes les {POLL_INTERVAL}s")
+        target_syms = {s.upper() for s in BINANCE_SYMBOLS}
+        print(f"[Price Feed] Démarrage Bybit polling {len(BINANCE_SYMBOLS)} symboles toutes les {POLL_INTERVAL}s")
 
         async with aiohttp.ClientSession() as session:
             while self._running:
                 try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    async with session.get(BYBIT_REST_URL, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
+                            tickers = data.get("result", {}).get("list", [])
                             now = time.time()
-                            for item in data:
-                                sym = item["symbol"].lower()
-                                price = float(item["price"])
+                            for item in tickers:
+                                sym = item.get("symbol", "").lower()
+                                if sym.upper() not in target_syms:
+                                    continue
+                                price = float(item.get("lastPrice", 0))
                                 if not price:
                                     continue
                                 self.prices[sym] = price
@@ -91,9 +94,9 @@ class BinanceFeed:
                                     except Exception:
                                         pass
                         else:
-                            print(f"[Binance REST] ⚠️  HTTP {resp.status}")
+                            print(f"[Price Feed] ⚠️  HTTP {resp.status}")
                 except Exception as e:
-                    print(f"[Binance REST] ⚠️  Erreur ({e}), retry dans 5s…")
+                    print(f"[Price Feed] ⚠️  Erreur ({e}), retry dans 5s…")
                     await asyncio.sleep(5)
                     continue
                 await asyncio.sleep(POLL_INTERVAL)
