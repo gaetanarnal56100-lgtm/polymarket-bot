@@ -1,4 +1,4 @@
-"""binance_ws.py — CoinGecko REST polling (aucune restriction géographique)"""
+"""binance_ws.py — CryptoCompare REST polling (aucune restriction géographique, pas de clé)"""
 from __future__ import annotations
 import asyncio
 import math
@@ -8,22 +8,22 @@ from typing import Callable
 import aiohttp
 from config import BINANCE_SYMBOLS, PRICE_WINDOW_SEC
 
-# CoinGecko public API — fonctionne depuis toutes les régions GCP
-COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price"
-POLL_INTERVAL = 10.0  # 10s = 6 req/min (safe sous limite free 30/min)
+# CryptoCompare public API — gratuit, aucune restriction IP
+CC_URL     = "https://min-api.cryptocompare.com/data/pricemulti"
+POLL_INTERVAL = 5.0  # 5s = 12 req/min (limite free ~50 req/min)
 
-# Mapping symbol Binance → CoinGecko ID
-SYMBOL_TO_CG = {
-    "btcusdt":  "bitcoin",
-    "ethusdt":  "ethereum",
-    "solusdt":  "solana",
-    "xrpusdt":  "ripple",
-    "bnbusdt":  "binancecoin",
-    "dogeusdt": "dogecoin",
-    "suiusdt":  "sui",
+# Mapping symbol Binance → CryptoCompare fsym
+SYMBOL_TO_CC = {
+    "btcusdt":  "BTC",
+    "ethusdt":  "ETH",
+    "solusdt":  "SOL",
+    "xrpusdt":  "XRP",
+    "bnbusdt":  "BNB",
+    "dogeusdt": "DOGE",
+    "suiusdt":  "SUI",
 }
-CG_TO_SYMBOL = {v: k for k, v in SYMBOL_TO_CG.items()}
-CG_IDS = ",".join(SYMBOL_TO_CG[s] for s in BINANCE_SYMBOLS if s in SYMBOL_TO_CG)
+CC_TO_SYMBOL = {v: k for k, v in SYMBOL_TO_CC.items()}
+CC_FSYMS = ",".join(SYMBOL_TO_CC[s] for s in BINANCE_SYMBOLS if s in SYMBOL_TO_CC)
 
 
 class BinanceFeed:
@@ -75,24 +75,25 @@ class BinanceFeed:
             return 1.0 - raw_prob
 
     async def run(self):
-        """CoinGecko polling — fonctionne depuis toutes régions GCP."""
+        """CryptoCompare polling — fonctionne depuis toutes régions GCP."""
         self._running = True
-        params = {"ids": CG_IDS, "vs_currencies": "usd"}
-        print(f"[Price Feed] CoinGecko polling {len(SYMBOL_TO_CG)} symboles toutes les {POLL_INTERVAL}s")
+        params = {"fsyms": CC_FSYMS, "tsyms": "USD"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        print(f"[Price Feed] CryptoCompare polling {len(SYMBOL_TO_CC)} symboles toutes les {POLL_INTERVAL}s")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=headers) as session:
             while self._running:
                 try:
-                    async with session.get(COINGECKO_URL, params=params,
+                    async with session.get(CC_URL, params=params,
                                            timeout=aiohttp.ClientTimeout(total=8)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             now = time.time()
-                            for cg_id, values in data.items():
-                                sym = CG_TO_SYMBOL.get(cg_id)
+                            for cc_sym, values in data.items():
+                                sym = CC_TO_SYMBOL.get(cc_sym)
                                 if not sym:
                                     continue
-                                price = float(values.get("usd", 0))
+                                price = float(values.get("USD", 0))
                                 if not price:
                                     continue
                                 self.prices[sym] = price
@@ -110,9 +111,6 @@ class BinanceFeed:
                                 btc = self.prices.get("btcusdt", 0)
                                 eth = self.prices.get("ethusdt", 0)
                                 print(f"[Price Feed] ✅ BTC={btc:.0f} ETH={eth:.0f}")
-                        elif resp.status == 429:
-                            print("[Price Feed] ⚠️  Rate limit, attente 30s…")
-                            await asyncio.sleep(30)
                         else:
                             print(f"[Price Feed] ⚠️  HTTP {resp.status}")
                 except Exception as e:
